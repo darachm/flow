@@ -1,0 +1,7 @@
+FileName	Variable1	Variable2	Variable3	Variable4	Variable5
+A01.fcs	Strain_DGY1	Dye_no_stain	Ploidy_1N	Media_C-lim-D0.3	Experiment_expt1
+A02.fcs	Strain_DGY1	Dye_10uL_500nM	Ploidy_1N	Media_C-lim-D0.3	Experiment_expt1
+A03.fcs	Strain_DGY1	Dye_50uL_500nM	Ploidy_1N	Media_C-lim-D0.3	Experiment_expt1
+A04.fcs	Strain_DGY1	Dye_100uL_500nM	Ploidy_1N	Media_C-lim-D0.3	Experiment_expt1
+A05.fcs	Strain_DGY1	Dye_250uL_500nM	Ploidy_1N	Media_C-lim-D0.3	Experiment_expt1
+A06.fcs	Strain_DGY1	Dye_500uL_500nM	Ploidy_1N	Media_C-lim-D0.3	Experiment_expt1
