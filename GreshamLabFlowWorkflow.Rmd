@@ -23,6 +23,8 @@ a file called `SampleSheet.txt` that tells me which one is what.
 If you don't have that, this doesn't run. So just get with the
 program and make one.
 
+Try `edit()`?
+
 Really, you should just make this with a GUI spreadsheet. So copy
 the SampleSheet.txt from an example, and edit it. If you want to
 get fancy, below's a snippet that you can use to generate one in R
@@ -134,7 +136,6 @@ for (dataDirectory in dataDirectoryz) {
     oneBigFlowSet <- tmpFlowSet
   }
 }
-
 print("Counted this many events:")
 print(fsApply(oneBigFlowSet,nrow))
 print("other statz?")
@@ -145,22 +146,43 @@ First checkout what's up, exploratory plotting
 
 ```{r exploratory}
 ggcyto(oneBigFlowSet,aes(x=`FSC-A`,y=`FSC-H`))+geom_hex()
-
 ```
 
+Okay, this whole `flowCore` thing is just really hard to manage.
+I'm just going to splay it out as a `data.frame`.
 
+```{r splayToDF}
+source("src/fc2df.R")
+datar <- fc2df(oneBigFlowSet)
+```
+
+srsly
 
 ## gating
 
-```{r}
-plot(oneBigFlowSet, c('FSC.H','FSC.A'), 
-  xlim=c(0,3e6), ylim=c(0,3e6),
-  main="keep clicking to surround the singles, then right click when you're done",
-  smooth=F)
-Agate <- locator(type="l",col="red") 
-  # alternative approach could be devised with identify()
-gm.1 <- as.matrix(data.frame(FSC.H=Agate$x,FSC.A=Agate$y))
-pg.singlets <- polygonGate(filterId="singlets",.gate=gm.1)
+If you screw up, delete the gating file.
+
+```{r gator, cache=F}
+gateFilename <- paste0("gatesFor",digest::digest(datar),".RData")
+if (file.exists(gateFilename)) {
+  load(gateFilename)
+  } else {
+  with(datar[sample(1:nrow(datar),1e5),],
+    plot(x=log10(FSC.A),y=log10(FSC.H),pch=16,cex=0.2,
+      main=paste0("keep clicking to surround the singles, then right",
+        " click when you're done"),
+      xlim=c(range(log10(datar$FSC.A))),
+      ylim=c(range(log10(datar$FSC.H))))
+    )
+  singletGP <- locator(type="l",col="red") 
+  dev.off()
+  singletG <- as.matrix(
+    data.frame(FSC.H=singletGP$x,FSC.A=singletGP$y))
+  gateSinglets <- polygonGate(filterId="singlets",.gate=singletG)
+  save(file=gateFilename,list=c())
+}
+
+
 
 #test that the singlet gate looks reasonable for the sample
 xyplot(FSC.A~FSC.H,data=flowData[[1]],xlim=c(0,3e6), ylim=c(0,3e6), smooth=F, filter=pg.singlets, outline=T)
