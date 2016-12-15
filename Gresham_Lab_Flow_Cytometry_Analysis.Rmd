@@ -10,11 +10,30 @@ output:
     toc: yes
 ---
 
+> "I hear and I forget. I see and I remember. I copy this file and
+>   modify it and I have a reproducible record of my analyses."
+>
+>   - Confucious
+
+<!--
+> "The people may be made to follow a path of action, but they 
+>   may not be made to understand it."
+> 
+>   - Confucious
+-->
+
 
 **Experiment overview**
 
 Write a detailed description of your experiment here including the goal of the analysis and your interpretation of the results.   
 If you still see this text it means that you have not described the experiment and whatever follows is meaningless.
+Life is meaningless - but properly documented experiments have context.
+
+For example, this example without context makes me wonder why we're
+looking for GFP fluoresence with a dye as the major source of 
+variation in the experimental design. Is there a GFP as a 
+transcription-and-translation reporter of dye content?
+
 ###############################
 
 > This code is designed for use with the Accuri flow cytometer, which is equiped with the following lasers and filters
@@ -27,7 +46,7 @@ If you still see this text it means that you have not described the experiment a
   + FL2 filter = 610/20nm   mCherry, dtomato
   + FL4 filter = 586/15nm   DsRed
   
-  
+[You should be familiar with your flow cytometer](https://gencore.bio.nyu.edu/shared-equipment/flow-cytometry/)  
 
 **Requirements**  
 In order to run this code you need:  
@@ -43,455 +62,381 @@ In order to run this code you need:
 **Output**  
 This script generates a summary of results followed by quality control plots.  
 
-
-
 #Step 1: Load relevant libraries 
+
+This is a function that just makes sure you have a package, or installs it for you without prompting
+
+<!--
+RStudio seems to have fucked up how they packaged `httpuv`, and 
+didn't test a non-gui install, like they should. I'm not alone in 
+this problem online,  and `httpuv`
+doesn't install like an R package. I'm assuming they slip it into
+RStudio, and then build dependencies upon it that won't install
+unless you manually install it. So `flowWorkspace` won't load right.
+
+You need to open up another session of R with `--no-init-file` and
+`--no-restore` and install the packages.
+-->
+
 ```{r Libraries, eval=TRUE}
-# This is a function that just makes sure you have a package, or installs it for you without prompting
-
-requireInstall <- function(packageName,isBioconductor=F) {
-  if ( !try(require(packageName,character.only=T)) ) {
-    print(paste0("You don't have ",packageName," accessible, ",
-      "I'm gonna install it"))
-    if (isBioconductor) {
-      source("http://bioconductor.org/biocLite.R")                        
-      biocLite(packageName)                                                 
-    } else {
-      install.packages("packageName", repos = "http://cran.us.r-project.org")
-    }
-  }
-  return(1)
-}
-
-#Load libraries
-requireInstall("flowCore",isBioconductor=T)
-requireInstall("flowViz",isBioconductor=T)
-requireInstall("flowStats")
-requireInstall("Hmisc")
+source("src/requireInstall.R")
 requireInstall("reshape2")
 requireInstall("ggplot2")
-requireInstall("flowWorkspace")
-requireInstall("ggcyto", isBioconductor=T)
+requireInstall("flowCore",isBioconductor=T)
+requireInstall("flowViz",isBioconductor=T)
+requireInstall("Hmisc",isBioconductor=T)
 requireInstall("gridExtra")
-
-
+requireInstall("flowStats",isBioconductor=T)
+requireInstall("flowWorkspace",isBioconductor=T)
+requireInstall("ggcyto", isBioconductor=T)
 ```
+<!--
+In the above chunk, we should specify the end packages and let them
+handle dependencies as it sees fit.
+-->
 
-#Step 2: Read in .fcs files, an Rdata file containing the gates sample sheet(s) that contains four columns with 
-* column1 = Well
-* column2 = Strain
-* column3 = Staining
-* column4 = Media
-* column5 = Userdefined
+#Step 2: Read in .fcs files
 
-```{r Variable definitions}
-#Read in all data for analysis. Data should be in individual directories that contain .fcs files and a corresponding sample sheet with a generic format. FCS file names should be unaltered e.g AO1.fcs, A02.fcs, ...H12.fcs 
-#An abitrary number of directories can be used named dir1, dir2, dir3...with a corresponding flowData.1, flowData.2, flowData.3...and sample.sheet.1, sample.sheet.2, sample.sheet.3...
+Read in all data for analysis. Data should be in individual directories that contain .fcs files and a corresponding sample sheet with a generic format. 
+FCS file names need to match the `SampleSheet.txt`.
 
-#load the Rdata file containing the gates
-load("gates.Rdata") 
+Want to make your `SampleSheet.txt`? Use a GUI spreadsheet thingy,
+like excel or googledocs or localc or `edit()` in R.
+The format is:
 
-#Define the directory, or directories, containing your .fcs files using absolute path names 
-dir1 <- "/Users/David/Google Drive/Gresham Lab_David/flow/flow cytometry"
-dir2 <- "/Users/David/Google Drive/Gresham Lab_David/flow/flow cytometry"
+| FileName | Ploidy | Dye | ... |
+|:---|:---|:---|:---|
+|A01.fcs|1.5ploid|acridineOrange|...|
+|A02|2.5ploid|acridineOrange|...|
+|A03.fcs|1.5ploid|sytoselect|...|
 
-#Read in all the fcs files in the directory, with alter.names changing "-" to "."  
-flowData.1 <- read.flowSet(path = dir1, pattern=".fcs", alter.names=TRUE)
-flowData.2 <- read.flowSet(path = dir2, pattern=".fcs", alter.names=TRUE)
+Where the only mandatory variable name is `FileName`, then all
+the others are whatever you're using.
 
-#Read in the sample sheet that should be in each directory that contains the .fcs files.  
-sample.sheet.1 <- read.delim(paste(dir1, "SampleSheet.txt", sep="/"))
-sample.sheet.2 <- read.delim(paste(dir2, "SampleSheet2.txt", sep="/"))
-
-#Change names of samples to those specified in the sample sheets
-sampleNames(flowData.1) <- paste(sample.sheet.1[,1], sample.sheet.1[,2], sample.sheet.1[,3], sample.sheet.1[,4], sample.sheet.1[,5], sample.sheet.1[,6], sep=" ")
-sampleNames(flowData.2) <- paste(sample.sheet.2[,1], sample.sheet.2[,2], sample.sheet.2[,3], sample.sheet.2[,4], sample.sheet.2[,5], sample.sheet.2[,6], sep=" ")
-```
+An abitrary number of directories can be used, put the paths in the
+`dataDirectoryz` vector. Here we use relative becuase it should be
+reproducible between users. You should use ABSOLUTE for your real
+work. Don't have this folder? Download it (look up).
 
 
-```{r flowSet summaries}
-#Check how many cells were counted in each fcs file
-fsApply(flowData.1, each_col, length)[1:6]
-fsApply(flowData.2, each_col, length)[1:6]
+```{r readingFCSandSampleSheet, cache=T}
+dataDirectoryz <- c("exampleFlowDataset1")
 
-total.1 <- fsApply(flowData.1, each_col, length)[1:6]  #total counts per sample
-total.2 <- fsApply(flowData.1, each_col, length)[1:6] #total counts per sample
+rm(oneBigFlowSet)
+for (dataDirectory in dataDirectoryz) {
 
-#Print the medians of data values for each measurement
-fsApply(flowData.1, each_col, median)
-fsApply(flowData.2, each_col, median)
+  print(paste("Reading",dataDirectory))
 
-#combine all flowSets into a single flowset
-flowData <- rbind2(flowData.1, flowData.2)
-total <- fsApply(flowData, each_col, length)[1:12] #total number of measurements per sample
-fsApply(flowData, each_col, median)
-samples.num <- length(flowData)
+  tmpSampleSheet <- read.delim(
+    paste0(dataDirectory,"/SampleSheet.txt"),row.names=1)
 
-```
+  tmpFlowSet <- read.flowSet(path=dataDirectory,pattern=".fcs",
+    alter.names=TRUE, #why?
+    phenoData=new("AnnotatedDataFrame",data=tmpSampleSheet)) 
 
-#Step 3: apply filters to data and generate plots showing the effect on filtering
-```{r Application of Gates}
-##Subset the data by applying sequential gates##
+  sampleNames(tmpFlowSet) <- paste0(dataDirectory,"/",
+    sampleNames(tmpFlowSet))
+  pData(tmpFlowSet)$name <- sampleNames(tmpFlowSet)
 
-#apply doublet gate
-flowData.singlets <- Subset(flowData, pg.singlets) 
-fsApply(flowData.singlets, each_col, length)[1:samples.num]
-singlets <- fsApply(flowData.singlets, each_col, length)[1:samples.num]
-barplot(singlets/total, ylim=c(0,1), ylab = "Proportion singlet cells", las=2, cex.names = 0.5, names.arg=sampleNames(flowData))
-
-#apply debris gate
-filteredData <- Subset(flowData.singlets, pg.nondebris) 
-fsApply(filteredData, each_col, length)[1:samples.num]
-non.debris <- fsApply(filteredData, each_col, length)[1:samples.num]
-barplot(non.debris/total, ylim=c(0,1), ylab = "Proportion singlet and nondebris cells", las=2, cex.names = 0.5, names.arg=sampleNames(flowData))
-
-#########
-#filteredData is the variable name for the data filtered of doublets and debris that are used for all subsequent analyses
-##########
-
-#this gate defines nongfp cells
-gfp.neg <- Subset(filteredData, pg.nongfp) 
-fsApply(gfp.neg, each_col, length)[1:samples.num]
-non.gfp <- fsApply(gfp.neg, each_col, length)[1:samples.num]
-barplot(non.gfp/non.debris, ylim=c(0,1), ylab = "Proportion cells with no GFP", las=2, cex.names = 0.5, names.arg=sampleNames(flowData))
-
-#this gate defines gfp cells
-gfp.pos <- Subset(filteredData, pg.gfp) 
-fsApply(gfp.pos, each_col, length)[1:samples.num]
-gfp.cells <- fsApply(gfp.pos, each_col, length)[1:samples.num]
-barplot(gfp.cells/non.debris, ylim=c(0,1), ylab = "Proportion cells with GFP", las=2, cex.names = 0.5, names.arg=sampleNames(flowData))
-
-#this gate defines high GFP cells
-gfp.hi <- Subset(filteredData, pg.hi.gfp) 
-fsApply(gfp.hi, each_col, length)[1:samples.num]
-hi.gfp.cells <- fsApply(gfp.hi, each_col, length)[1:samples.num]
-barplot(hi.gfp.cells/non.debris, ylim=c(0,1), ylab = "Proportion cells with high GFP", las=2, cex.names = 0.5, names.arg=sampleNames(flowData))
-```
-
-#Step 4: Data analysis
-
-##diagnostic values can be defined for plotting purposes
-```{r Definition of diagnostic values}
-#define critical values that can superimposed on plots for easy visual comparison
-
-gfp.bg <- 3.9  #a background value for GFP
-gfp.wt <- 5.9 #a value for wildtype GFP expression
-red.bg <- 3.03 #a background value for the red channel
-red.wt <- 3.75 #a value for wildtype Red expression
-haploid.fsc <- 6e5 #an empirical value for forward scatter for haploids
-diploid.fsc <- 7e5 #an empirical value for forward scatter for diploids
-gfp.norm <- 0.935 #an empricial value for gfp expression normalized by forward scatter
-red.norm <- 0.57 #an empricial value for red expression normalized by forward scatter
-gfp.red.norm <- 1.5 #an empricial value for gfp expression normalized by red channel
-
-```
-
-##Extract data from fcs files to generate statistics and boxplots
-```{r Data extraction and plotting}
-#record summary statistics for each sample in a matrix named summary.stats 
-summary.stats <- matrix(data = NA, nrow = length(filteredData), ncol = 18, dimnames = list(sampleNames(filteredData),c("FSC_median","FSC_mean", "FSC_sd","FL1_median", "FL1_mean","FL1_sd","normalizedGFP_median", "normalizedGFP_mean", "normalizedGFP_sd","FL2_median","FL2_mean","FL2_sd","normalizedRed_median","normalizedRed_mean", "normalizedRed_sd","GFPnormalizedByRed_median", "GFPnormalizedByRed_mean","GFPnormalizedByRed_sd")))
-
-#use the sample containing the minimum number of points after filtering for doublets and debris to define the number of data points retained for all samples
-sample.size <- min(fsApply(filteredData, each_col, length))  
-
-print(sample.size)
-
-comparison.FSC <- matrix(data = NA, nrow = sample.size, ncol = length(filteredData), byrow = FALSE,dimnames = NULL)
-comparison.FL1 <- matrix(data = NA, nrow = sample.size, ncol = length(filteredData), byrow = FALSE,dimnames = NULL)
-comparison.FL2 <- matrix(data = NA, nrow = sample.size, ncol = length(filteredData), byrow = FALSE,dimnames = NULL)
-comparison.FL1NormFsc <- matrix(data = NA, nrow = sample.size, ncol = length(filteredData), byrow = FALSE,dimnames = NULL)
-comparison.FL2NormFsc <- matrix(data = NA, nrow = sample.size, ncol = length(filteredData), byrow = FALSE,dimnames = NULL)
-comparison.FL1NormFL2 <- matrix(data = NA, nrow = sample.size, ncol = length(filteredData), byrow = FALSE,dimnames = NULL)
-
-#for each sample plot a histogram of the normalized data, raw FSC and raw GFP per row
-par(mfrow=c(1,2), mar=c(5.1,2.1,2.1,2.1), oma=c(1.5,2,1,1))
-
-#extract data from flowFrames to plot histograms of values and record summary statistics
-for (i in 1:length(filteredData)){
- 
-  temp <- exprs(filteredData[[i]]) #exprs() extracts a matrix of the values from the flowframe
- 
-
-  ##########################################
-  #record summary statistics for the sample#
-  ##########################################
-  
-  #FSC
-  summary.stats[i,1] <- median(temp[,1]) 
-  summary.stats[i,2] <-mean(temp[,1])  
-  summary.stats[i,3] <- sd(temp[,1])
-  #FL1
-  summary.stats[i,4] <- median(temp[,3])
-  summary.stats[i,5] <-mean(temp[,3])  
-  summary.stats[i,6] <- sd(temp[,3])
-  #FL1 (GFP) divided by FSC
-  summary.stats[i,7] <- median(temp[,3]/temp[,1])
-  summary.stats[i,8] <-mean(temp[,3]/temp[,1])  
-  summary.stats[i,9] <- sd(temp[,3]/temp[,1])
-  #FL2
-  summary.stats[i,10] <- median(temp[,4])
-  summary.stats[i,11] <-mean(temp[,4])  
-  summary.stats[i,12] <- sd(temp[,4])
-  #FL2 (Red) divided by FSC
-  summary.stats[i,13] <- median(temp[,4]/temp[,1])
-  summary.stats[i,14] <-mean(temp[,4]/temp[,1])  
-  summary.stats[i,15] <- sd(temp[,4]/temp[,1])
-  #FL1 (GFP) divided by FL2 (Red)
-  summary.stats[i,16] <- median(temp[,3]/temp[,4])
-  summary.stats[i,17] <-mean(temp[,3]/temp[,4])  
-  summary.stats[i,18] <- sd(temp[,3]/temp[,4])  
-  
-  ##############################################
-  #plot histograms of the channels of interest##
-  ##############################################
-
-  ###############
-  #Green channel#
-  ###############
-  
-  #FL1 (GFP)
-  hist(log10(temp[,3]), br=1000, xlab = "log10(FL1)", main = "FL1") 
-  abline(v=gfp.bg, col="yellow", lty=2, lwd=2)
-  abline(v=gfp.wt, col="green", lty=2, lwd=2) 
-  legend("topleft",  legend=paste("median FL1 = ",round(median(temp[,3]), digits=4),sep=""))
-
-  #GFP divided by FSC
-  hist(temp[,3]/temp[,1], br=500, xlab = "FL1/FSC", main = "FL1/FSC") 
-  abline(v=gfp.norm, col="green", lty=2, lwd=2 )
-  legend("topleft",  legend=paste("median GFP / FSC=",round(median(temp[,3]/temp[,1]), digits=4),sep=""))
-  
-  mtext(sampleNames(filteredData[i]), outer = TRUE, cex = 1.0)
-  
-  ###############
-  #Red channel#
-  ###############
-  #FL2 (Red)
-  hist(log10(temp[,4]), br=500, xlab = "log10(FL2)", main = "FL2") 
-  abline(v=red.bg, col="yellow", lty=2, lwd=2)
-  abline(v=red.wt, col="red", lty=2, lwd=2) 
-  legend("topleft",  legend=paste("median FL2=",round(median(temp[,4]), digits=4),sep=""))
- 
-  #FL2 divided by FSC
-  hist(temp[,4]/temp[,1], br=500, xlab = "FL2/FSC", main = "FL2/FSC") 
-  abline(v=red.norm, col="red", lty=2, lwd=2 )
-  legend("topleft",  legend=paste("median FL2 / FSC=",round(median(temp[,4]/temp[,1]), digits=4),sep=""))
-
-  mtext(sampleNames(filteredData[i]), outer = TRUE, cex = 1.0)
-  
-  ###############
-  #Other#########
-  ###############
-  
-  #FL1 divided by FL2
-  hist(temp[,4]/temp[,3], br=500, xlab = "FL2/FL1", main = "FL1/FL2") 
-  abline(v=gfp.red.norm, col="purple", lty=2, lwd=2)
-  legend("topleft",  legend=paste("median FL1 / FL2=",round(median(temp[,4]/temp[,3]), digits=4),sep=""))
-
-    #FSC
-  hist(log10(temp[,1]), br=500, xlab = "log10(FSC)", main = "FSC", xlim=c(4,8)) 
-  abline(v=haploid.fsc, col="blue", lty=2, lwd=2)
-  abline(v=diploid.fsc, col="grey", lty=2, lwd=2)
-  legend("topleft",  legend=paste("median FSC=",round(median(temp[,1]), digits=4),sep=""))
-  
-  mtext(sampleNames(filteredData[i]), outer = TRUE, cex = 1.0)
-
-print("-------------------------------------------------------")
-print("-----------------------------------")
-print("----------------------")
-
-  ############################################################
-  #keep the data set for generating boxplots comparing values#
-  ############################################################
-  
-  #Note that the amount of data kept for each sample is defined by the lowest count among all the samples.
-  comparison.FSC[1:sample.size,i] <- temp[1:sample.size,1] #FSC
-  comparison.FL1[1:sample.size,i] <- temp[1:sample.size,3] #FL1 (GFP)
-  comparison.FL1NormFsc[1:sample.size,i] <- temp[1:sample.size,3]/temp[1:sample.size,1] #GFP/FSC
-  comparison.FL2[1:sample.size,i] <- temp[1:sample.size,4] #FL2 
-  comparison.FL2NormFsc[1:sample.size,i] <- temp[1:sample.size,4]/temp[1:sample.size,1] #FL2/FSC
-  comparison.FL1NormFL2[1:sample.size,i] <- temp[1:sample.size,3]/temp[1:sample.size,4] #FL1/FL2
-  
+  if (exists("oneBigFlowSet")) {
+    oneBigFlowSet <- rbind2(oneBigFlowSet,tmpFlowSet)
+  } else {
+    oneBigFlowSet <- tmpFlowSet
+  }
 }
+pData(oneBigFlowSet)
+print("Counted this many events:")
+print(fsApply(oneBigFlowSet,nrow))
+print("other statz?")
+print(fsApply(oneBigFlowSet,each_col,median))
+save(file=paste0("flowSet",digest::digest(oneBigFlowSet),".RData"))
+```
 
-par(mfrow=c(1,1)) #change number of plots per row back to standard
+Now you have `oneBigFlowSet`. Great. For gating, we'll turn that into
+a data.frame:
 
+```{r flowset2df}
+source("src/fs2df.R")
+datar <- fs2df(oneBigFlowSet)
 ```
 
 
-##Overview of data distributions
-```{r Overall data distributions}
-par(mar=c(8.1,4.1,4.1,2.1)) #create more space at lower margin
+#Step 3: gate
 
-boxplot(comparison.FSC, names=sampleNames(filteredData), notch = TRUE, col = "gray", ylab="FSC", cex.axis=0.5,las=2, outline=F)
-abline(h=haploid.fsc, lty=2, col=2)
-abline(h=diploid.fsc, lty=2, col=3)
+So I can't actually figure out how to make rmarkdown play with
+interactive chunks. So you should see an error right about....
 
-boxplot(comparison.FL1, names=sampleNames(filteredData), notch = TRUE, col = "lightgreen", ylab="FL1", cex.axis=0.5,las=2, outline=F)
-abline(h=gfp.bg ,lty=2, lwd=3, col="yellow")
-abline(h=gfp.wt, lty = 2, lwd=3, col="green")
-
-boxplot(comparison.FL1NormFsc, names=sampleNames(filteredData), notch = TRUE, col = "green", ylab="FL1/FSC", cex.axis=0.5,las=2, outline=F)
-abline(h=gfp.norm, lty=2, lwd=3, col="blue")
-
-boxplot(comparison.FL2, names=sampleNames(filteredData), notch = TRUE, col = "pink", ylab="FL2", cex.axis=0.5,las=2, outline=F)
-abline(h=red.bg, lty=2, lwd=3, col="pink")
-abline(h=red.wt, lty=2, lwd=3, col="red")
-
-boxplot(comparison.FL2NormFsc, names=sampleNames(filteredData), notch = TRUE, col = "red", ylab="FL2/FSC", cex.axis=0.5,las=2, outline=F)
-abline(h=red.norm, lty=2, lwd=3, col="red")
-
-boxplot(comparison.FL1NormFL2, names=sampleNames(filteredData), notch = TRUE, col = "purple", ylab="FL1/FL2", cex.axis=0.5,las=2, outline=F)
-abline(h=gfp.red.norm, lty=2, lwd=3, col="purple")
-
-par(mar=c(5.1,4.1,4.1,2.1)) #reset margins to default
-
-#generate a summary table containing all the recorded statistics
-print(summary.stats)
-summary.stats <- as.data.frame(summary.stats)
-
+```{r gateLoad, cache=F}
+gateFilename <- paste0("gatesFor",digest::digest(oneBigFlowSet),".RData")
+load(gateFilename)
 ```
 
+Okay, so now go to your terminal and run this:
 
-##Quantitation of relative FL1 signal
-```{r}
-baseline.FL1 <- summary.stats$FL1_median[1]
-
-barplot(summary.stats$FL1_median/baseline.FL1, ylab="Relative FL1 median expression", las=2, cex.names = 0.5, names.arg=sampleNames(filteredData))
-
+```{r gating, cache=F,eval=F}
+source("src/gator.R")
+gatez <- list()
+gatez[["singlet"]] <- gator2d(datar,ehx="FSC.A",why="FSC.H",
+  gateName="singlet") 
+gatez[["cells"]] <- gator2d(datar,ehx="FSC.A",why="SSC.A", 
+  gateName="cells") 
+gatez[["gfpPos"]] <- gator2d(datar,ehx="FSC.A",why="FL1.A",
+  gateName="gfpPositive") 
+gatez[["gfpNeg"]] <- gator2d(datar,ehx="FSC.A",why="FL1.A", 
+  gateName="gfpDepressing") 
+save(file=gateFilename,list=c("gatez"))
 ```
 
-##Quantitation of forward scatter
-```{r}
-baseline.FSC <- summary.stats$FSC_median[1]
+If you screw it up, delete the RData file of the gates, and re-run.
 
-barplot(summary.stats$FSC_median/baseline.FSC, ylab="Relative median FSC", las=2, cex.names = 0.5, names.arg=sampleNames(filteredData))
+<!--
+This also needs an implementation for 1D. I'm thinking that you just
+call `gator` function, then you give it a vector of one or two
+dimensions you want to gate on. Then you give it a vector of one or
+two dimensions to plot. It builds the plot, then the current 
+implementation would be if you give it two and two. If you give it
+one and one, then it's gating on a histogram with locate(1).
+If it's two plot and one gate, then it's a one sided gate on a 2d
+scatter. Would be cool.
 
-```
+Would be nice to also have a quadrant gate. Are there functions in
+flowCore for this?
+-->
 
-##Population composition
-```{r}
-pop.composition <- rbind(non.gfp/non.debris,gfp.cells/non.debris,hi.gfp.cells/non.debris)
-barplot(pop.composition, ylab="Proportion of population", legend=c("No GFP", "Normal GFP", "High GFP"),las=2, cex.names = 0.5,names.arg=sampleNames(filteredData))
+how they look?
 
-```
-
-#Step 5: Quality control
-
-##Gates
-```{r}
-###First flowset
-#Singlets gate
-xyplot(FSC.A~FSC.H, data=flowData.1, xlim=c(0,3e6), ylim=c(0,3e6), filter=pg.singlets,  smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = "First flowset - singlets gate")
-
-#Debris gate
-xyplot(SSC.A ~ FSC.A, data=flowData.1, displayFilter=TRUE, xlim=c(0,3e6), ylim=c(0,3e5), filter=pg.nondebris, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T,  main = "First flowset - nondebris gate")
-
-#Non-fluorescent population gate
-xyplot(FL1.A~FSC.A,data=flowData.1, displayFilter=TRUE, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.nongfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T,  main = "First flowset - non GFP gate")
-
-#Fluorescent population gate
-xyplot(FL1.A~FSC.A,data=flowData.1, displayFilter=TRUE, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.gfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = "First flowset - GFP gate")
-
-#High fluorescing gate
-xyplot(FL1.A~FSC.A,data=flowData.1, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.hi.gfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T,  main = "First flowset - high GFP gate")
-
-################
-###Second flowset
-#Singlets gate
-xyplot(FSC.A~FSC.H, data=flowData.2, xlim=c(0,3e6), ylim=c(0,3e6), filter=pg.singlets,  smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = "Second flowset - singlets gate")
-
-#Debris gate
-xyplot(SSC.A ~ FSC.A, data=flowData.2, displayFilter=TRUE, xlim=c(0,3e6), ylim=c(0,3e5), filter=pg.nondebris, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T,  main = "Second flowset  - nondebris gate")
-
-#Non-fluorescent population gate
-xyplot(FL1.A~FSC.A,data=flowData.2, displayFilter=TRUE, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.nongfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T,  main = "Second flowset - non GFP gate")
-
-#Fluorescent population gate
-xyplot(FL1.A~FSC.A,data=flowData.2, displayFilter=TRUE, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.gfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = "Second flowset - GFP gate")
-
-#High fluorescing gate 
-xyplot(FL1.A~FSC.A,data=flowData.2, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.hi.gfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T,  main = "Second flowset - high GFP gate")
-
-
-#####Attempted as loop below to plot each one individually and is not working
-
-for (i in 1:length(filteredData)){
-
-#Singlets gate
-xyplot(FSC.A~FSC.H, data=flowData[i], xlim=c(0,3e6), ylim=c(0,3e6), filter=pg.singlets,  smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = sampleNames(flowData)[i])
-
-#Debris gate
-xyplot(SSC.A ~ FSC.A, data=flowData[i], displayFilter=TRUE, xlim=c(0,3e5), ylim=c(0,3e6), filter=pg.nondebris, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = sampleNames(flowData)[i])
-
-#Non-fluorescent population gate
-xyplot(FL1.A~FSC.A,data=flowData[i], displayFilter=TRUE, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.nongfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = sampleNames(flowData)[i])
-
-#Fluorescent population gate
-xyplot(FL1.A~FSC.A,data=flowData[i], displayFilter=TRUE, xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.gfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = sampleNames(flowData)[i])
-
-#High fluorescing gate
-xyplot(FL1.A~FSC.A,data=flowData[i], xlim=c(0,5e6), ylim=c(0,5e4), filter=pg.hi.gfp, smooth=F, xbin=1024, stat=T, pos=0.5, abs=T, main = sampleNames(flowData)[i])
-
+```{r gateCheck, cache=T}
+#source("src/gateCheck.R")
+#gateCheck()
+#make a function so we can re-call it after starting to apply these
+for (gateName in names(gatez)) {
+  print(gateName)
+  ingate  <- data.frame(
+    fs2df(Subset(oneBigFlowSet,gatez[[gateName]])),thisGate=T)
+  outgate <- data.frame(
+    fs2df(Subset(oneBigFlowSet,!gatez[[gateName]])),thisGate=F)
+  shuffle <- rbind(ingate,outgate)
+  shuffle <- shuffle[sample(1:nrow(shuffle)),]
+  names(shuffle)[which(names(shuffle)=="thisGate")] <- gateName
+  print(
+    ggplot(shuffle)+
+      facet_wrap(~name)+
+      aes_string(x=colnames(gatez[[gateName]]@boundaries)[1],
+                 y=colnames(gatez[[gateName]]@boundaries)[2],
+                 col=gateName)+
+      geom_point(size=0.2,alpha=0.5)+
+      scale_y_log10()+
+      scale_x_log10()
+  )
 }
 ```
+Subset the data by applying sequential gates
 
+> "When you have doublets, do not fear to abandon them."
+>
+>   - Confucious
 
-##Data transformation for visualization
-```{r}
-#In order to look at QC plots the data is transformed using the logicle transform, which is a log transform for high values that transitions to a linear transformation near zero values 
-
-#This is simply for visualization purposes
-
-lgcl <- logicleTransform(w = 0.5, t= 10000, m=4.5) #the parameters w,t, and m define the transformation parameters
-
-#Dataset 1 tranformation applied to every channel except width and time
-dataLGCLTransform <- transform(filteredData,'FSC.A' = lgcl(`FSC.A`), 'SSC.A' =lgcl(`SSC.A`), 'FL1.A' = lgcl(`FL1.A`), 'FL2.A' = lgcl(`FL2.A`), 'FL3.A' = lgcl(`FL3.A`), 'FL4.A' = lgcl(`FL4.A`),'FSC.H' = lgcl(`FSC.H`),'SSC.H' = lgcl(`SSC.H`),'FL1.H' = lgcl(`FL1.H`),'FL2.H' = lgcl(`FL2.H`),'FL3.H' = lgcl(`FL3.H`),'FL4.H' = lgcl(`FL4.H`)) 
-
-
-```
-
-##Effect of time
-```{r}
-#The effect of time on signal (of which there shouldn't be any)
-i <- 1
-xyplot(FL1.A ~ Time, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(150,250), main = sampleNames(filteredData)[i])
-i <- 2
-xyplot(FL1.A ~ Time, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(150,250), main = sampleNames(filteredData)[i])
-i <- 3
-xyplot(FL1.A ~ Time, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(150,250), main = sampleNames(filteredData)[i])
-####Attempted as loop and will not work 
-for (i in 1:length(filteredData)){
-xyplot(FL1.A ~ Time, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(150,250), main = sampleNames(filteredData)[i])
+```{r gateApply}
+rm(filteredDatar)
+for (gateName in c("singlet","cells")) {
+  print(gateName)
+  if (exists("filteredDatar")) {
+    filteredDatar  <- Subset(filteredDatar,gatez[[gateName]])
+  } else {
+    filteredDatar  <- Subset(oneBigFlowSet,gatez[[gateName]])
+  }
 }
+#gateCheck() call would go here
 ```
 
-##Plots of FL1 versus FSC
-```{r}
-i <- 1
-xyplot(FL1.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), sampleNames(filteredData)[i])
-i <- 2
-xyplot(FL1.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), sampleNames(filteredData)[i])
-i <- 3
-xyplot(FL1.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), sampleNames(filteredData)[i])
-####Attempted as loop and will not work 
-for (i in 1:length(filteredData)){
-xyplot(FL1.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), ylim=c(2,6), sampleNames(filteredData)[i])
+Buidling a better datastructure, for later use
+
+```{r unpack}
+source("src/splitFSbyGate.R")
+gatedFilteredDatar <- filteredDatar
+for (gateName in setdiff(names(gatez),c("singlet","cells"))) {
+  gatedFilteredDatar <- splitFSbyGate(gatedFilteredDatar,
+    gatez[[gateName]])
 }
+gfdatar <- fs2df(gatedFilteredDatar)
 ```
 
-##Plots of FSC versus SSC
-```{r}
-i <- 1
-xyplot(SSC.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), ylim=c(4,8), sampleNames(filteredData)[i])
-i <- 2
-xyplot(SSC.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), ylim=c(4,8), sampleNames(filteredData)[i])
-i <- 3
-xyplot(SSC.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), ylim=c(4,8), sampleNames(filteredData)[i])
-####Attempted as loop and will not work 
-for (i in 1:length(filteredData)){
-xyplot(SSC.A ~ FSC.A, data=dataLGCLTransform[i], smooth=F,  stat=T, pos=0.5, abs=T, xlim=c(4,8), ylim=c(4,8), sampleNames(filteredData)[i])
-}
+#Step 4: Plotz
+
+Into usable form:
+
+```{r summaryPlotz,cache=T}
+head(gfdatar)
+mfdatar <- melt(gfdatar,
+  id.vars=c("Strain","ul500nMDye","Ploidy","Media","name","gfpPos","gfpNeg"),
+  measure.vars=c("FSC.A","FSC.H","FL1.A","FL1.H","FL2.A","FL2.H"))
+head(mfdatar)
 ```
+
+- summary statistics
+
+Many of the `gatedFilteredDatar` things will be `NA`'s, that's ok.
+It's because there's not many members in those particular 
+gate/flowframes.
+
+```{r filteredSummarys,cache=T}
+fsApply(filteredDatar,function(x){
+  data.frame(t(each_col(x,summary)))})
+fsApply(gatedFilteredDatar,function(x){
+  data.frame(t(each_col(x,summary)))})
+```
+
+- for each sample plot a histogram of the normalized data, raw FSC and raw GFP per row
+
+```{r histoGramz,cache=T}
+ggplot(mfdatar)+
+  facet_grid(name~variable,scales="free")+
+  aes(x=log10(value))+
+  geom_histogram(bins=50)
+```
+
+- extract data from flowFrames to plot histograms of values and record summary statistics
+
+```{r moreSummary,cache=T}
+aggregate(data=mfdatar,value~variable+name,FUN=mean)
+aggregate(data=mfdatar,value~variable+name,FUN=median)
+```
+
+Specific plotz
+```{r moreplotz,cache=T}
+ggplot(subset(mfdatar,variable%in%c("FL2.A","FL2.H")))+
+  aes(x=log10(value))+facet_grid(name~variable)+
+  geom_histogram()+
+  geom_vline(xintercept=4,col="cyan")
+
+ggplot(subset(gfdatar))+
+  aes(x=log10(FL2.A/FSC.A))+
+  facet_grid(name~.)+
+  geom_histogram()+
+  geom_vline(xintercept=0,col="cyan")
+
+ggplot(subset(gfdatar))+
+  aes(x=log10(FL1.A/FL2.A))+
+  facet_grid(name~.)+
+  geom_histogram()+
+  geom_vline(xintercept=0,col="cyan")
+
+ggplot(subset(gfdatar))+
+  aes(x=log10(FSC.H/FL2.A))+
+  facet_grid(name~.)+
+  geom_histogram()+
+  geom_vline(xintercept=0,col="cyan")
+
+ggplot(subset(mfdatar,variable%in%c("FSC.A","FL1.A","FL2.A")))+
+  aes(x=name,y=(value))+facet_grid(~variable,scales="free")+
+  geom_violin()+scale_y_log10()+
+  theme(axis.text.x=element_text(angle=90))
+
+ggplot(subset(mfdatar,variable%in%c("FSC.A","FL1.A","FL2.A")))+
+  aes(x=name,y=(value))+facet_grid(~variable,scales="free")+
+  geom_boxplot()+scale_y_log10()+
+  theme(axis.text.x=element_text(angle=90))
+
+```
+
+Comparison of FL1.A to 0nM
+
+```{r evenMoar,cache=T}
+aggregate(data=gfdatar,FL1.A~ul500nMDye,FUN=median)
+medianFL1Anodye <- median(subset(gfdatar,ul500nMDye==0)$FL1.A)
+ggplot(gfdatar)+
+  aes(x=ul500nMDye,y=FL1.A/medianFL1Anodye,group=name)+
+  geom_boxplot()+scale_y_log10()+
+  theme(axis.text.x=element_text(angle=90))
+```
+
+Comparison of FSC.A to 0nM
+
+```{r scatterChange,cache=T}
+aggregate(data=gfdatar,FSC.A~ul500nMDye,FUN=median)
+medianFSCAnodye <- median(subset(gfdatar,ul500nMDye==0)$FSC.A)
+ggplot(gfdatar)+
+  aes(x=ul500nMDye,y=FSC.A/medianFSCAnodye,group=name)+
+  geom_boxplot()+scale_y_log10()+
+  theme(axis.text.x=element_text(angle=90))
+```
+
+Population composition
+
+```{r aMess,cache=T}
+t(apply(
+  data.frame(
+    aggregate(data=gfdatar,cbind(gfpPos,gfpNeg)~ul500nMDye,
+      FUN=function(x){sum(x==T)}),
+    aggregate(data=gfdatar,name~ul500nMDye,FUN=length)
+   ),1,function(x){return(c(x[1],x[2:3]/x[5]))}))
+```
+
+Step 5: Quality control
+
+> “Great Scientist calculates in terms of the Control of the Quality
+>   of the Apparatus, not in terms of earning a living. Agriculture 
+>   is inspired by the fear of hunger; study, by an interest in 
+>   salary. Great Scientist is concerned about the Apparatus; 
+>   not about poverty. Yet.” 
+>
+>   - Confucious
+
+Scroll up to see how the gates did. Below is an example of `ggplot()`.
+
+```{r anotherplot,cache=T}
+ggplot(gfdatar)+
+  facet_wrap(~ul500nMDye)+
+  aes(x=FSC.A,y=FL1.A,col=gfpNeg)+
+  geom_point(alpha=0.5,size=0.2)+
+  scale_y_log10()+scale_x_log10()
+```
+
+Data transformation for visualization
+
+> “Data can make the Transformation great; 
+>   it isn’t Transformation which makes the Data great.”
+>
+>   - Confucious
+
+In order to look at QC plots the data is transformed using the logicle transform, which is a log transform for high values that transitions to a linear transformation near zero values.
+This is simply for visualization purposes.
+
+the parameters w,t, and m define the transformation parameters
+Below, dataset 1 tranformation applied to every channel except width and time.
+
+```{r transformers,cache=T}
+lgcl <- logicleTransform(w = 0.5, t= 10000, m=4.5)
+dataLGCLTransform <- transform(gatedFilteredDatar,'FSC.A' = lgcl(`FSC.A`), 'SSC.A' =lgcl(`SSC.A`), 'FL1.A' = lgcl(`FL1.A`), 'FL2.A' = lgcl(`FL2.A`), 'FL3.A' = lgcl(`FL3.A`), 'FL4.A' = lgcl(`FL4.A`),'FSC.H' = lgcl(`FSC.H`),'SSC.H' = lgcl(`SSC.H`),'FL1.H' = lgcl(`FL1.H`),'FL2.H' = lgcl(`FL2.H`),'FL3.H' = lgcl(`FL3.H`),'FL4.H' = lgcl(`FL4.H`)) 
+```
+
+Effect of time
+
+> "Study the past if you would define the future."
+>
+>  - Confucious
+
+```{r time,cache=T}
+ggplot(gfdatar)+
+  aes(x=Time,y=FL1.A,col=factor(ul500nMDye))+
+  geom_point(size=0.2,alpha=0.5)+
+  stat_smooth()+scale_y_log10()
+```
+
+Two more plots
+
+```{r}
+ggplot(gfdatar[sample(1:nrow(gfdatar)),])+
+  aes(x=FSC.A,y=FL1.A,col=factor(ul500nMDye))+
+  geom_point(size=0.2,alpha=0.5)+
+  scale_y_log10()+scale_x_log10()
+
+ggplot(gfdatar[sample(1:nrow(gfdatar)),])+
+  aes(x=FSC.A,y=SSC.A,col=factor(ul500nMDye))+
+  geom_point(size=0.2,alpha=0.5)+
+  scale_y_log10()+scale_x_log10()
+```
+
 
 
 
