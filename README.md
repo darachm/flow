@@ -13,14 +13,20 @@ The overall strategy for using flow cytometry analysis is:
 
 To run the example script, download the dataset 
 [from here](https://osf.io/ka5xx/).
+You can see the example of this analysis 
+[here](docs/Gresham_Lab_Flow_Cytometry_Analysis.html).
 
-You can see the example of this analysis [here](https://darachm.github.io/flow/Gresham_Lab_Flow_Cytometry_Analysis.html).
+We should have these pairs of example datasets and analyses, more of
+them. 
 
-You can see the example of this analysis [here](docs/Gresham_Lab_Flow_Cytometry_Analysis.html)
+- ~12 samples of dye concentration
+- a plate of GAP1::GFP
+- something else
 
 # paging
 
 To make it so that you can view HTML pages, go to repository
-settings and enable github pages and set it to master branch, docs
-folder. Then put a link in here, if you want to.
+settings and enable github pages and set it to read the master 
+branch. Then put a link in here, if you want to. Note the relative
+links above work just fine.
 
