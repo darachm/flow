@@ -16,12 +16,15 @@ To run the example script, download the dataset
 You can see the example of this analysis 
 [here](docs/Gresham_Lab_Flow_Cytometry_Analysis.html).
 
+
 We should have these pairs of example datasets and analyses, more of
 them. 
 
 - ~12 samples of dye concentration
+[here](docs/Gresham_Lab_Flow_Cytometry_Analysis.html).
 - a plate of GAP1::GFP
 - something else
+- [coulter counting](docs/exampleTwoCoulterZ2.html)
 
 # paging
 
