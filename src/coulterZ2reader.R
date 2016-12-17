@@ -18,3 +18,6 @@ coulterZ2reader <- function(datadir) {
   return(lrgdf)
 }
 
+df2distribution <- function(somedf) {
+	return(as.numeric(rep(somedf$bins,somedf$height)))
+}
